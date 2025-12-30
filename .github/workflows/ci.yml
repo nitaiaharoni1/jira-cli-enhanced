@@ -6,10 +6,24 @@ on:
   push:
     branches: [main]
 
-name: Build
+name: CI
 
 jobs:
-  tests:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1.24.1'
+
+      - name: Run linter
+        run: make lint
+
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,8 +37,38 @@ jobs:
       - name: Install dependencies
         run: make deps
 
-      - name: Run linter
-        run: make lint
+      - name: Run tests with coverage
+        run: |
+          go test -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
 
-      - name: Run tests
-        run: make test
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+        exclude:
+          - os: windows
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1.24.1'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -o jira-${{ matrix.os }}-${{ matrix.arch }} ./cmd/jira

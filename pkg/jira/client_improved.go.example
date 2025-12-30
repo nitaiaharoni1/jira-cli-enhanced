@@ -1,0 +1,140 @@
+package jira
+
+// This file demonstrates improved HTTP client with connection reuse and better error handling.
+// It can be used as a reference when refactoring the client.
+
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+// Improved Client with HTTP client reuse
+type ImprovedClient struct {
+	transport  http.RoundTripper
+	insecure  bool
+	server    string
+	login     string
+	authType  *AuthType
+	token     string
+	timeout   time.Duration
+	debug     bool
+	httpClient *http.Client // Reused HTTP client
+}
+
+// getHTTPClient returns a reusable HTTP client instance
+func (c *ImprovedClient) getHTTPClient() *http.Client {
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{
+			Transport: c.transport,
+			Timeout:   c.timeout,
+		}
+	}
+	return c.httpClient
+}
+
+// requestWithRetry performs a request with automatic retry for transient errors
+func (c *ImprovedClient) requestWithRetry(ctx context.Context, method, endpoint string, body []byte, headers Header, maxRetries int) (*http.Response, error) {
+	var lastErr error
+	var lastResp *http.Response
+
+	for i := 0; i < maxRetries; i++ {
+		resp, err := c.request(ctx, method, endpoint, body, headers)
+		
+		if err == nil {
+			// Check if status code is retryable
+			if resp.StatusCode < 500 {
+				return resp, nil
+			}
+			lastResp = resp
+		}
+
+		// Check if error is retryable
+		if !IsRetryableError(err) && (resp == nil || resp.StatusCode < 500) {
+			return resp, err
+		}
+
+		lastErr = err
+		
+		// Don't retry on last attempt
+		if i < maxRetries-1 {
+			// Exponential backoff
+			backoff := time.Duration(1<<uint(i)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+				// Continue retry
+			}
+		}
+	}
+
+	if lastResp != nil {
+		return lastResp, lastErr
+	}
+	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// request performs the actual HTTP request using the reused client
+func (c *ImprovedClient) request(ctx context.Context, method, endpoint string, body []byte, headers Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, &ErrNetwork{Underlying: err}
+	}
+
+	// Set headers
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// Set authentication
+	if c.authType == nil {
+		basic := AuthTypeBasic
+		c.authType = &basic
+	}
+
+	switch c.authType.String() {
+	case string(AuthTypeMTLS):
+		if c.token != "" {
+			req.Header.Add("Authorization", "Bearer "+c.token)
+		}
+	case string(AuthTypeBearer):
+		req.Header.Add("Authorization", "Bearer "+c.token)
+	case string(AuthTypeBasic):
+		req.SetBasicAuth(c.login, c.token)
+	}
+
+	// Use reused HTTP client
+	resp, err := c.getHTTPClient().Do(req)
+	if err != nil {
+		return nil, &ErrNetwork{Underlying: err}
+	}
+
+	// Check for HTTP errors and convert to structured errors
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		
+		switch resp.StatusCode {
+		case 401:
+			return nil, &ErrAuthentication{Reason: "invalid credentials"}
+		case 403:
+			return nil, &ErrAuthentication{Reason: "insufficient permissions"}
+		case 404:
+			return nil, &ErrNotFound{Resource: "resource", ID: ""}
+		case 429:
+			retryAfter := parseRetryAfter(resp.Header)
+			return nil, &ErrRateLimit{RetryAfter: retryAfter}
+		default:
+			return nil, formatUnexpectedResponse(resp)
+		}
+	}
+
+	return resp, nil
+}
+
+// parseRetryAfter extracts Retry-After header value
+func parseRetryAfter(headers http.Header) int {
+	// Implementation to parse Retry-After header
+	return 0
+}
+

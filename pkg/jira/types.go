@@ -122,8 +122,9 @@ type IssueFields struct {
 		InwardIssue  *Issue `json:"inwardIssue,omitempty"`
 		OutwardIssue *Issue `json:"outwardIssue,omitempty"`
 	} `json:"issueLinks"`
-	Created string `json:"created"`
-	Updated string `json:"updated"`
+	Attachments []*Attachment `json:"attachment"`
+	Created     string         `json:"created"`
+	Updated     string         `json:"updated"`
 }
 
 // Field holds field info.

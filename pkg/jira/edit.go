@@ -30,6 +30,8 @@ type EditRequest struct {
 	Components      []string
 	FixVersions     []string
 	AffectsVersions []string
+	// OriginalEstimate sets the original time estimate for the issue.
+	OriginalEstimate string
 	// CustomFields holds all custom fields passed
 	// while editing the issue.
 	CustomFields map[string]string
@@ -164,6 +166,9 @@ type editRequest struct {
 			Key string `json:"key,omitempty"`
 			Set string `json:"set,omitempty"`
 		} `json:"parent,omitempty"`
+		TimeTracking *struct {
+			OriginalEstimate string `json:"originalEstimate,omitempty"`
+		} `json:"timetracking,omitempty"`
 	} `json:"fields"`
 }
 
@@ -335,6 +340,9 @@ func getRequestDataForEdit(req *EditRequest) *editRequest {
 			Key string `json:"key,omitempty"`
 			Set string `json:"set,omitempty"`
 		} `json:"parent,omitempty"`
+		TimeTracking *struct {
+			OriginalEstimate string `json:"originalEstimate,omitempty"`
+		} `json:"timetracking,omitempty"`
 	}{
 		Parent: &struct {
 			Key string `json:"key,omitempty"`
@@ -347,6 +355,11 @@ func getRequestDataForEdit(req *EditRequest) *editRequest {
 		} else {
 			fields.Parent.Key = req.ParentIssueKey
 		}
+	}
+	if req.OriginalEstimate != "" {
+		fields.TimeTracking = &struct {
+			OriginalEstimate string `json:"originalEstimate,omitempty"`
+		}{OriginalEstimate: req.OriginalEstimate}
 	}
 
 	data := editRequest{

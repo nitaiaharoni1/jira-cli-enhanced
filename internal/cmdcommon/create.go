@@ -1,6 +1,7 @@
 package cmdcommon
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -239,11 +240,10 @@ func GetConfiguredCustomFields() ([]jira.IssueTypeField, error) {
 	return configuredFields, nil
 }
 
-// ValidateCustomFields validates custom fields.
-// TODO: Fail with error instead of warning in future release.
-func ValidateCustomFields(fields map[string]string, configuredFields []jira.IssueTypeField) {
+// ValidateCustomFields validates custom fields and returns an error if invalid fields are found.
+func ValidateCustomFields(fields map[string]string, configuredFields []jira.IssueTypeField) error {
 	if len(fields) == 0 {
-		return
+		return nil
 	}
 
 	fieldsMap := make(map[string]string)
@@ -260,11 +260,11 @@ func ValidateCustomFields(fields map[string]string, configuredFields []jira.Issu
 	}
 
 	if len(invalidCustomFields) > 0 {
-		cmdutil.Warn(`
-Some custom fields are not configured and will be ignored. This will fail with error in the future release.
-Please make sure that the passed custom fields are valid and configured accordingly in the config file.
-Invalid custom fields used in the command: %s`,
-			strings.Join(invalidCustomFields, ", "),
-		)
+		return &jira.ErrValidation{
+			Field:   "custom_fields",
+			Message: fmt.Sprintf("invalid custom fields: %s. Please make sure that the passed custom fields are valid and configured accordingly in the config file", strings.Join(invalidCustomFields, ", ")),
+		}
 	}
+
+	return nil
 }

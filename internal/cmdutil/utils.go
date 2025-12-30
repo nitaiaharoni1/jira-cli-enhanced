@@ -20,14 +20,41 @@ import (
 )
 
 // ExitIfError exists with error message if err is not nil.
+// It provides actionable suggestions based on error type.
 func ExitIfError(err error) {
 	if err == nil {
 		return
 	}
 
 	var msg string
+	var suggestion string
 
-	if e, ok := err.(*jira.ErrUnexpectedResponse); ok {
+	switch e := err.(type) {
+	case *jira.ErrAuthentication:
+		msg = fmt.Sprintf("Authentication failed: %s", e.Reason)
+		suggestion = "Run 'jira init' to reconfigure your credentials or check your JIRA_API_TOKEN environment variable"
+
+	case *jira.ErrNotFound:
+		msg = e.Error()
+		suggestion = "Verify the ID is correct and you have access to this resource"
+
+	case *jira.ErrValidation:
+		msg = e.Error()
+		suggestion = "Check the command syntax and required parameters"
+
+	case *jira.ErrRateLimit:
+		msg = e.Error()
+		if e.RetryAfter > 0 {
+			suggestion = fmt.Sprintf("Wait %d seconds before retrying", e.RetryAfter)
+		} else {
+			suggestion = "Wait a moment and try again"
+		}
+
+	case *jira.ErrNetwork:
+		msg = e.Error()
+		suggestion = "Check your internet connection and try again"
+
+	case *jira.ErrUnexpectedResponse:
 		dm := fmt.Sprintf(
 			"\njira: Received unexpected response '%s'.\nPlease check the parameters you supplied and try again.",
 			e.Status,
@@ -38,18 +65,42 @@ func ExitIfError(err error) {
 		if len(bd) > 0 {
 			msg = fmt.Sprintf("%s%s", bd, dm)
 		}
-	} else if e, ok := err.(*jira.ErrMultipleFailed); ok {
+
+		// Provide specific suggestions based on status code
+		switch {
+		case e.StatusCode == 401:
+			suggestion = "Authentication failed. Run 'jira init' to reconfigure credentials"
+		case e.StatusCode == 403:
+			suggestion = "You don't have permission to perform this operation. Check your access rights"
+		case e.StatusCode == 404:
+			suggestion = "Resource not found. Verify the ID is correct"
+		case e.StatusCode >= 500:
+			suggestion = "Server error. This may be temporary - try again in a moment"
+		default:
+			suggestion = "Check your parameters and try again"
+		}
+
+	case *jira.ErrMultipleFailed:
 		msg = fmt.Sprintf("\n%s%s", "SOME REQUESTS REPORTED ERROR:", e.Error())
-	} else {
+		suggestion = "Some operations failed. Review the errors above and retry failed items individually"
+
+	default:
 		switch err {
 		case jira.ErrEmptyResponse:
 			msg = "jira: Received empty response.\nPlease try again."
+			suggestion = "The server returned an empty response. This may be temporary - try again"
+		case jira.ErrNoResult:
+			msg = "jira: No results found."
+			suggestion = "Try adjusting your search criteria or filters"
 		default:
 			msg = fmt.Sprintf("Error: %s", err.Error())
 		}
 	}
 
 	fmt.Fprintf(os.Stderr, "%s\n", msg)
+	if suggestion != "" {
+		fmt.Fprintf(os.Stderr, "\n💡 %s\n", suggestion)
+	}
 	os.Exit(1)
 }
 

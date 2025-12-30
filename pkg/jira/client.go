@@ -116,14 +116,15 @@ type Config struct {
 
 // Client is a jira client.
 type Client struct {
-	transport http.RoundTripper
-	insecure  bool
-	server    string
-	login     string
-	authType  *AuthType
-	token     string
-	timeout   time.Duration
-	debug     bool
+	transport  http.RoundTripper
+	insecure   bool
+	server     string
+	login      string
+	authType   *AuthType
+	token      string
+	timeout    time.Duration
+	debug      bool
+	httpClient *http.Client // Reused HTTP client for connection pooling
 }
 
 // ClientFunc decorates option for client.
@@ -177,7 +178,23 @@ func NewClient(c Config, opts ...ClientFunc) *Client {
 
 	client.transport = transport
 
+	// Set default timeout if not provided
+	if client.timeout == 0 {
+		client.timeout = 30 * time.Second
+	}
+
 	return &client
+}
+
+// getHTTPClient returns a reusable HTTP client instance for connection pooling.
+func (c *Client) getHTTPClient() *http.Client {
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{
+			Transport: c.transport,
+			Timeout:   c.timeout,
+		}
+	}
+	return c.httpClient
 }
 
 // WithTimeout is a functional opt to attach timeout to the client.
@@ -244,7 +261,64 @@ func (c *Client) DeleteV2(ctx context.Context, path string, headers Header) (*ht
 	return c.request(ctx, http.MethodDelete, c.server+baseURLv2+path, nil, headers)
 }
 
+const (
+	// defaultMaxRetries is the default number of retries for transient errors.
+	defaultMaxRetries = 3
+)
+
+// request performs the actual HTTP request.
 func (c *Client) request(ctx context.Context, method, endpoint string, body []byte, headers Header) (*http.Response, error) {
+	return c.requestWithRetry(ctx, method, endpoint, body, headers, defaultMaxRetries)
+}
+
+// requestWithRetry performs a request with automatic retry for transient errors.
+func (c *Client) requestWithRetry(ctx context.Context, method, endpoint string, body []byte, headers Header, maxRetries int) (*http.Response, error) {
+	var lastErr error
+	var lastResp *http.Response
+
+	for i := 0; i < maxRetries; i++ {
+		resp, err := c.doRequest(ctx, method, endpoint, body, headers)
+		
+		if err == nil {
+			// Check if status code is retryable (5xx errors)
+			if resp.StatusCode < 500 {
+				return resp, nil
+			}
+			lastResp = resp
+			// Close body for retryable errors
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
+		}
+
+		// Check if error is retryable
+		if !IsRetryableError(err) && (resp == nil || resp.StatusCode < 500) {
+			return resp, err
+		}
+
+		lastErr = err
+		
+		// Don't retry on last attempt
+		if i < maxRetries-1 {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Duration(1<<uint(i)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+				// Continue retry
+			}
+		}
+	}
+
+	if lastResp != nil {
+		return lastResp, lastErr
+	}
+	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// doRequest performs a single HTTP request without retry logic.
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, body []byte, headers Header) (*http.Response, error) {
 	var (
 		req *http.Request
 		res *http.Response
@@ -253,7 +327,7 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body []by
 
 	req, err = http.NewRequest(method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &ErrNetwork{Underlying: err}
 	}
 
 	defer func() {
@@ -285,9 +359,60 @@ func (c *Client) request(ctx context.Context, method, endpoint string, body []by
 		req.SetBasicAuth(c.login, c.token)
 	}
 
-	httpClient := &http.Client{Transport: c.transport}
+	// Use reused HTTP client for better performance and connection pooling
+	httpClient := c.getHTTPClient()
 
-	return httpClient.Do(req.WithContext(ctx))
+	resp, err := httpClient.Do(req.WithContext(ctx))
+	if err != nil {
+		return nil, &ErrNetwork{Underlying: err}
+	}
+
+	// Convert HTTP errors to structured error types
+	if resp.StatusCode >= 400 {
+		switch resp.StatusCode {
+		case 401:
+			resp.Body.Close()
+			return nil, &ErrAuthentication{Reason: "invalid credentials"}
+		case 403:
+			resp.Body.Close()
+			return nil, &ErrAuthentication{Reason: "insufficient permissions"}
+		case 404:
+			resp.Body.Close()
+			return nil, &ErrNotFound{Resource: "resource", ID: ""}
+		case 429:
+			retryAfter := parseRetryAfter(resp.Header)
+			resp.Body.Close()
+			return nil, &ErrRateLimit{RetryAfter: retryAfter}
+		case 500, 502, 503, 504:
+			// Server errors are retryable - don't close body here, let retry logic handle it
+			return resp, nil
+		default:
+			resp.Body.Close()
+			return nil, formatUnexpectedResponse(resp)
+		}
+	}
+
+	return resp, nil
+}
+
+// parseRetryAfter extracts Retry-After header value in seconds.
+func parseRetryAfter(headers http.Header) int {
+	retryAfter := headers.Get("Retry-After")
+	if retryAfter == "" {
+		return 0
+	}
+
+	// Try to parse as integer seconds
+	if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil {
+		return int(seconds.Seconds())
+	}
+
+	// Try to parse as integer
+	if seconds, err := time.ParseDuration(retryAfter); err == nil {
+		return int(seconds.Seconds())
+	}
+
+	return 0
 }
 
 func dump(req *http.Request, res *http.Response) {

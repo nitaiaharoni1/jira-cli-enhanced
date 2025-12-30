@@ -1,0 +1,137 @@
+package view
+
+// This file demonstrates improved error handling patterns using RunE.
+// It can be used as a reference when refactoring other commands.
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/ankitpokhrel/jira-cli/api"
+	"github.com/ankitpokhrel/jira-cli/internal/cmdutil"
+	tuiView "github.com/ankitpokhrel/jira-cli/internal/view"
+	"github.com/ankitpokhrel/jira-cli/pkg/jira"
+	"github.com/ankitpokhrel/jira-cli/pkg/jira/filter/issue"
+)
+
+// NewCmdViewImproved demonstrates improved error handling.
+func NewCmdViewImproved() *cobra.Command {
+	cmd := cobra.Command{
+		Use:     "view ISSUE-KEY",
+		Short:   "View displays contents of an issue",
+		Long:    helpText,
+		Example: examples,
+		Aliases: []string{"show"},
+		Annotations: map[string]string{
+			"help:args": "ISSUE-KEY\tIssue key, eg: ISSUE-1",
+		},
+		// Use Args for validation - Cobra handles this automatically
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("issue key is required")
+			}
+			// Validate issue key format
+			key := cmdutil.GetJiraIssueKey(viper.GetString(configProject), args[0])
+			return cmdutil.ValidateIssueKey(key)
+		},
+		// Use RunE to return errors instead of handling them internally
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, err := cmd.Flags().GetBool(flagRaw)
+			if err != nil {
+				return fmt.Errorf("failed to get raw flag: %w", err)
+			}
+
+			if raw {
+				return viewRawImproved(cmd, args)
+			}
+			return viewPrettyImproved(cmd, args)
+		},
+	}
+
+	cmd.Flags().Uint(flagComments, 1, "Show N comments")
+	cmd.Flags().Bool(flagPlain, false, "Display output in plain mode")
+	cmd.Flags().Bool(flagRaw, false, "Print raw Jira API response")
+
+	return &cmd
+}
+
+func viewRawImproved(cmd *cobra.Command, args []string) error {
+	debug, err := cmd.Flags().GetBool(flagDebug)
+	if err != nil {
+		return fmt.Errorf("failed to get debug flag: %w", err)
+	}
+
+	key := cmdutil.GetJiraIssueKey(viper.GetString(configProject), args[0])
+
+	apiResp, err := func() (string, error) {
+		s := cmdutil.Info(messageFetchingData)
+		defer s.Stop()
+
+		client := api.DefaultClient(debug)
+		return api.ProxyGetIssueRaw(client, key)
+	}()
+	if err != nil {
+		// Wrap error with context
+		return fmt.Errorf("failed to fetch issue %q: %w", key, err)
+	}
+
+	fmt.Println(apiResp)
+	return nil
+}
+
+func viewPrettyImproved(cmd *cobra.Command, args []string) error {
+	debug, err := cmd.Flags().GetBool(flagDebug)
+	if err != nil {
+		return fmt.Errorf("failed to get debug flag: %w", err)
+	}
+
+	var comments uint
+	if cmd.Flags().Changed(flagComments) {
+		comments, err = cmd.Flags().GetUint(flagComments)
+		if err != nil {
+			return fmt.Errorf("failed to get comments flag: %w", err)
+		}
+	} else {
+		numComments := viper.GetUint("num_comments")
+		comments = max(numComments, 1)
+	}
+
+	key := cmdutil.GetJiraIssueKey(viper.GetString(configProject), args[0])
+	iss, err := func() (*jira.Issue, error) {
+		s := cmdutil.Info(messageFetchingData)
+		defer s.Stop()
+
+		client := api.DefaultClient(debug)
+		return api.ProxyGetIssue(client, key, issue.NewNumCommentsFilter(comments))
+	}()
+	if err != nil {
+		// Check if it's a not found error
+		if e, ok := err.(*jira.ErrUnexpectedResponse); ok && e.StatusCode == 404 {
+			return &jira.ErrNotFound{
+				Resource: "issue",
+				ID:       key,
+			}
+		}
+		return fmt.Errorf("failed to fetch issue %q: %w", key, err)
+	}
+
+	plain, err := cmd.Flags().GetBool(flagPlain)
+	if err != nil {
+		return fmt.Errorf("failed to get plain flag: %w", err)
+	}
+
+	v := tuiView.Issue{
+		Server:  viper.GetString(configServer),
+		Data:    iss,
+		Display: tuiView.DisplayFormat{Plain: plain},
+		Options: tuiView.IssueOption{NumComments: comments},
+	}
+	if err := v.Render(); err != nil {
+		return fmt.Errorf("failed to render issue: %w", err)
+	}
+
+	return nil
+}
+

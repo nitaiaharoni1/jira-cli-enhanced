@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/ankitpokhrel/jira-cli/pkg/jira/filter/issue"
@@ -468,6 +469,64 @@ func (c *Client) WatchIssue(key, watcher string) error {
 // WatchIssueV2 adds user as a watcher using using v2 version of the POST /issue/{key}/watchers endpoint.
 func (c *Client) WatchIssueV2(key, watcher string) error {
 	return c.watchIssue(key, watcher, apiVersion2)
+}
+
+// UnwatchIssue removes user from watchers.
+// For Cloud instances, watcher should be accountId.
+// For Local instances, watcher should be username.
+func (c *Client) UnwatchIssue(key, watcher string) error {
+	// Default to v2, but ProxyUnwatchIssue will handle version selection
+	return c.unwatchIssue(key, watcher, apiVersion2)
+}
+
+func (c *Client) unwatchIssue(key, watcher, ver string) error {
+	return c.UnwatchIssueWithAccountID(key, watcher, ver == apiVersion2, false)
+}
+
+// UnwatchIssueWithAccountID removes user from watchers using the appropriate parameter.
+// For Cloud instances, useAccountID should be true and watcher should be accountId.
+// For Local instances, useAccountID should be false and watcher should be username.
+func (c *Client) UnwatchIssueWithAccountID(key, watcher string, isV2, useAccountID bool) error {
+	var (
+		res *http.Response
+		err error
+	)
+
+	// URL encode the watcher parameter
+	watcherEncoded := url.QueryEscape(watcher)
+
+	header := Header{
+		"Accept": "application/json",
+	}
+
+	var path string
+	if useAccountID {
+		// Cloud instances: use accountId parameter
+		path = fmt.Sprintf("/issue/%s/watchers?accountId=%s", key, watcherEncoded)
+	} else {
+		// Local instances: use username parameter
+		path = fmt.Sprintf("/issue/%s/watchers?username=%s", key, watcherEncoded)
+	}
+
+	if isV2 {
+		res, err = c.DeleteV2(context.Background(), path, header)
+	} else {
+		res, err = c.DeleteV2(context.Background(), path, header)
+	}
+
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusNoContent && res.StatusCode != http.StatusOK {
+		return formatUnexpectedResponse(res)
+	}
+
+	return nil
 }
 
 func (c *Client) watchIssue(key, watcher, ver string) error {

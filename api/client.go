@@ -11,9 +11,18 @@ import (
 	"github.com/ankitpokhrel/jira-cli/pkg/netrc"
 )
 
-const clientTimeout = 15 * time.Second
+const defaultClientTimeout = 15 * time.Second
 
 var jiraClient *jira.Client
+
+// getClientTimeout returns the configured timeout or default.
+func getClientTimeout() time.Duration {
+	timeout := viper.GetDuration("timeout")
+	if timeout == 0 {
+		timeout = defaultClientTimeout
+	}
+	return timeout
+}
 
 // Client initializes and returns jira client.
 func Client(config jira.Config) *jira.Client {
@@ -63,7 +72,7 @@ func Client(config jira.Config) *jira.Client {
 
 	jiraClient = jira.NewClient(
 		config,
-		jira.WithTimeout(clientTimeout),
+		jira.WithTimeout(getClientTimeout()),
 		jira.WithInsecureTLS(*config.Insecure),
 	)
 
@@ -227,4 +236,29 @@ func ProxyWatchIssue(c *jira.Client, key string, user *jira.User) error {
 		return c.WatchIssueV2(key, assignee)
 	}
 	return c.WatchIssue(key, assignee)
+}
+
+// ProxyUnwatchIssue uses either a v2 or v3 version of the DELETE /issue/{key}/watchers
+// endpoint to remove a user from watchers. Defaults to v2 if installation type is
+// not defined in the config.
+func ProxyUnwatchIssue(c *jira.Client, key string, user *jira.User) error {
+	it := viper.GetString("installation")
+
+	var watcher string
+	useAccountID := false
+
+	if user != nil {
+		switch it {
+		case jira.InstallationTypeLocal:
+			watcher = user.Name
+			useAccountID = false
+		default:
+			// Cloud instances need accountId parameter, not username
+			watcher = user.AccountID
+			useAccountID = true
+		}
+	}
+
+	// Call UnwatchIssueWithAccountID (exported method)
+	return c.UnwatchIssueWithAccountID(key, watcher, it == jira.InstallationTypeLocal, useAccountID)
 }

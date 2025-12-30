@@ -160,7 +160,9 @@ func edit(cmd *cobra.Command, args []string) {
 			SkipNotify:      params.skipNotify,
 		}
 		if configuredCustomFields, err := cmdcommon.GetConfiguredCustomFields(); err == nil {
-			cmdcommon.ValidateCustomFields(edr.CustomFields, configuredCustomFields)
+			if err := cmdcommon.ValidateCustomFields(edr.CustomFields, configuredCustomFields); err != nil {
+				return err
+			}
 			edr.WithCustomFields(configuredCustomFields)
 		}
 

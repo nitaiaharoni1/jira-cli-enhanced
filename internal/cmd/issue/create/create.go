@@ -128,7 +128,9 @@ func create(cmd *cobra.Command, _ []string) {
 		cr.ForProjectType(projectType)
 		cr.ForInstallationType(installation)
 		if configuredCustomFields, err := cmdcommon.GetConfiguredCustomFields(); err == nil {
-			cmdcommon.ValidateCustomFields(cr.CustomFields, configuredCustomFields)
+			if err := cmdcommon.ValidateCustomFields(cr.CustomFields, configuredCustomFields); err != nil {
+				return nil, err
+			}
 			cr.WithCustomFields(configuredCustomFields)
 		}
 

@@ -84,14 +84,19 @@ func NewCmdRoot() *cobra.Command {
 				return
 			}
 
-			// mTLS doesn't need Jira API Token.
-			if viper.GetString("auth_type") != string(jira.AuthTypeMTLS) {
-				checkForJiraToken(viper.GetString("server"), viper.GetString("login"))
-			}
-
 			configFile := viper.ConfigFileUsed()
 			if !jiraConfig.Exists(configFile) {
 				cmdutil.Failed("Missing configuration file.\nRun 'jira init' to configure the tool.")
+			}
+
+			// Validate configuration
+			if err := jiraConfig.ValidateConfig(); err != nil {
+				cmdutil.ExitIfError(err)
+			}
+
+			// mTLS doesn't need Jira API Token.
+			if viper.GetString("auth_type") != string(jira.AuthTypeMTLS) {
+				checkForJiraToken(viper.GetString("server"), viper.GetString("login"))
 			}
 		},
 	}
