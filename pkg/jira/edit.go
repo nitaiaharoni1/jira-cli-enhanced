@@ -69,11 +69,10 @@ func (c *Client) Edit(key string, req *EditRequest) error {
 	if res == nil {
 		return ErrEmptyResponse
 	}
-	defer func() { _ = res.Body.Close() }()
-
 	if res.StatusCode != http.StatusNoContent {
 		return formatUnexpectedResponse(res)
 	}
+	defer func() { _ = res.Body.Close() }()
 
 	return nil
 }
@@ -118,6 +117,12 @@ type editFields struct {
 			Name string `json:"name,omitempty"`
 		} `json:"remove,omitempty"`
 	} `json:"versions,omitempty"`
+	TimeTracking []struct {
+		Edit struct {
+			OriginalEstimate  string `json:"originalEstimate,omitempty"`
+			RemainingEstimate string `json:"remainingEstimate,omitempty"`
+		} `json:"edit,omitempty"`
+	} `json:"timetracking,omitempty"`
 
 	customFields customField
 }
@@ -143,6 +148,9 @@ func (cfm *editFieldsMarshaler) MarshalJSON() ([]byte, error) {
 	if len(cfm.M.Labels) == 0 || (cfm.M.Labels[0].Add == "" && cfm.M.Labels[0].Remove == "") {
 		cfm.M.Labels = nil
 	}
+	if len(cfm.M.TimeTracking) == 0 || (cfm.M.TimeTracking[0].Edit.OriginalEstimate == "" && cfm.M.TimeTracking[0].Edit.RemainingEstimate == "") {
+		cfm.M.TimeTracking = nil
+	}
 
 	m, err := json.Marshal(cfm.M)
 	if err != nil {
@@ -166,9 +174,6 @@ type editRequest struct {
 			Key string `json:"key,omitempty"`
 			Set string `json:"set,omitempty"`
 		} `json:"parent,omitempty"`
-		TimeTracking *struct {
-			OriginalEstimate string `json:"originalEstimate,omitempty"`
-		} `json:"timetracking,omitempty"`
 	} `json:"fields"`
 }
 
@@ -335,36 +340,47 @@ func getRequestDataForEdit(req *EditRequest) *editRequest {
 		update.M.AffectsVersions = versions
 	}
 
-	fields := struct {
+	// Add timetracking to update structure (preferred method per Jira API docs)
+	if req.OriginalEstimate != "" {
+		update.M.TimeTracking = []struct {
+			Edit struct {
+				OriginalEstimate  string `json:"originalEstimate,omitempty"`
+				RemainingEstimate string `json:"remainingEstimate,omitempty"`
+			} `json:"edit,omitempty"`
+		}{{
+			Edit: struct {
+				OriginalEstimate  string `json:"originalEstimate,omitempty"`
+				RemainingEstimate string `json:"remainingEstimate,omitempty"`
+			}{
+				OriginalEstimate: req.OriginalEstimate,
+			},
+		}}
+	}
+
+	var fields struct {
 		Parent *struct {
 			Key string `json:"key,omitempty"`
 			Set string `json:"set,omitempty"`
 		} `json:"parent,omitempty"`
-		TimeTracking *struct {
-			OriginalEstimate string `json:"originalEstimate,omitempty"`
-		} `json:"timetracking,omitempty"`
-	}{
-		Parent: &struct {
-			Key string `json:"key,omitempty"`
-			Set string `json:"set,omitempty"`
-		}{},
 	}
 	if req.ParentIssueKey != "" {
+		fields.Parent = &struct {
+			Key string `json:"key,omitempty"`
+			Set string `json:"set,omitempty"`
+		}{}
 		if req.ParentIssueKey == AssigneeNone {
 			fields.Parent.Set = AssigneeNone
 		} else {
 			fields.Parent.Key = req.ParentIssueKey
 		}
 	}
-	if req.OriginalEstimate != "" {
-		fields.TimeTracking = &struct {
-			OriginalEstimate string `json:"originalEstimate,omitempty"`
-		}{OriginalEstimate: req.OriginalEstimate}
-	}
 
 	data := editRequest{
 		Update: update,
-		Fields: fields,
+	}
+	// Only include fields if parent is set
+	if fields.Parent != nil {
+		data.Fields = fields
 	}
 	constructCustomFieldsForEdit(req.CustomFields, req.configuredCustomFields, &data)
 
