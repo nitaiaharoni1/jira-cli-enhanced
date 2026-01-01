@@ -20,8 +20,8 @@ $ jira release update VERSION-ID --archived`
 var (
 	name        string
 	description string
-	released    *bool
-	archived    *bool
+	released    bool
+	archived    bool
 	releaseDate string
 	startDate   string
 )
