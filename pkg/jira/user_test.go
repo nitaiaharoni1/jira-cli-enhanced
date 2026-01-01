@@ -78,7 +78,7 @@ func TestUserSearchV2(t *testing.T) {
 		assert.Equal(t, "/rest/api/2/user/assignable/search", r.URL.Path)
 
 		assert.Equal(t, url.Values{
-			"username":   []string{"doe"},
+			"query":      []string{"doe"},
 			"startAt":    []string{"1"},
 			"maxResults": []string{"5"},
 			"accountId":  []string{"a123b"},

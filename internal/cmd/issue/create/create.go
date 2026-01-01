@@ -307,10 +307,10 @@ func (cc *createCmd) getRemainingQuestions() []*survey.Question {
 
 	if cc.params.Template != "" || cmdutil.StdinHasData() {
 		b, err := cmdutil.ReadFile(cc.params.Template)
-		if err != nil {
-			return nil, fmt.Errorf("error reading template: %w", err)
+		if err == nil {
+			defaultBody = string(b)
 		}
-		defaultBody = string(b)
+		// If there's an error reading the template, we'll just use empty default body
 	}
 
 	if cc.params.NoInput {

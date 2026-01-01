@@ -1,9 +1,7 @@
 package assign
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -72,7 +70,8 @@ func assign(cmd *cobra.Command, args []string) error {
 	jql, _ := cmd.Flags().GetString("jql")
 	
 	if stdin || jql != "" {
-		return assignBulk(cmd, args, project, stdin, jql)
+		// Use the bulk assign command handler
+		return assignBulk(cmd, args)
 	}
 	
 	params := parseArgsAndFlags(cmd.Flags(), args, project)
@@ -139,60 +138,6 @@ func assign(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("%s\n", cmdutil.GenerateServerBrowseURL(viper.GetString("server"), ac.params.key))
 	return nil
-}
-
-func assignBulk(cmd *cobra.Command, args []string, project string, stdin bool, jql string) error {
-	debug, _ := cmd.Flags().GetBool("debug")
-	client := api.DefaultClient(debug)
-	
-	var issueKeys []string
-	var err error
-	
-	if stdin {
-		// Read from stdin
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			key := strings.TrimSpace(scanner.Text())
-			if key != "" {
-				issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("failed to read from stdin: %w", err)
-		}
-	} else if jql != "" {
-		// Get issues from JQL
-		result, err := api.ProxySearch(client, jql, 0, 1000)
-		if err != nil {
-			return fmt.Errorf("failed to search issues: %w", err)
-		}
-		for _, issue := range result.Issues {
-			issueKeys = append(issueKeys, issue.Key)
-		}
-	} else {
-		// Use args (support multiple issue keys)
-		if len(args) < 2 {
-			return fmt.Errorf("assignee required")
-		}
-		assignee := args[len(args)-1]
-		issueKeys = make([]string, 0, len(args)-1)
-		for _, key := range args[:len(args)-1] {
-			issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
-		}
-		return assignBulkIssues(client, issueKeys, assignee, project)
-	}
-	
-	if len(issueKeys) == 0 {
-		return fmt.Errorf("no issues found")
-	}
-	
-	// Get assignee from args
-	if len(args) < 1 {
-		return fmt.Errorf("assignee required")
-	}
-	assignee := args[len(args)-1]
-	
-	return assignBulkIssues(client, issueKeys, assignee, project)
 }
 
 func assignBulkIssues(client *jira.Client, issueKeys []string, assignee string, project string) error {
@@ -381,8 +326,7 @@ func (ac *assignCmd) setAssignee(project string) error {
 			return err
 		}
 		if ans == optionCancel {
-			cmdutil.Fail("Action aborted")
-			os.Exit(0)
+			return fmt.Errorf("action aborted")
 		}
 		if ans != optionSearch {
 			break
