@@ -192,18 +192,17 @@ func loadList(cmd *cobra.Command, args []string) error {
 	plain, err := cmd.Flags().GetBool("plain")
 	cmdutil.ExitIfError(err)
 	
+	csv := false
 	if outputFormat == "csv" {
 		plain = true
+		csv = true
 	}
 
 	delimiter, err := cmd.Flags().GetString("delimiter")
 	cmdutil.ExitIfError(err)
-
-	csv, err := cmd.Flags().GetBool("csv")
-	cmdutil.ExitIfError(err)
 	
-	if outputFormat == "csv" {
-		csv = true
+	if outputFormat == "csv" && delimiter == "\t" {
+		delimiter = ","
 	}
 
 	noHeaders, err := cmd.Flags().GetBool("no-headers")
