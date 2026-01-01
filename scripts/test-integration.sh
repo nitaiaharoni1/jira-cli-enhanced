@@ -152,3 +152,4 @@ echo -e "${GREEN}All integration tests completed!${NC}"
 echo "Test issues: $TEST_ISSUE_1, $TEST_ISSUE_2, $TEST_ISSUE_3"
 echo "These will be cleaned up automatically."
 
+

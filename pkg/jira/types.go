@@ -171,10 +171,11 @@ type Sprint struct {
 	ID           int    `json:"id"`
 	Name         string `json:"name"`
 	Status       string `json:"state"`
-	StartDate    string `json:"startDate"`
-	EndDate      string `json:"endDate"`
+	StartDate    string `json:"startDate,omitempty"`
+	EndDate      string `json:"endDate,omitempty"`
 	CompleteDate string `json:"completeDate,omitempty"`
 	BoardID      int    `json:"originBoardId,omitempty"`
+	Goal         string `json:"goal,omitempty"`
 }
 
 // Transition holds issue transition info.

@@ -21,9 +21,9 @@ const (
 $ jira issue view ISSUE-1 --comments 5
 
 # Get the raw JSON data
-$ jira issue view ISSUE-1 --raw`
+$ jira issue view ISSUE-1 --output json`
 
-	flagRaw      = "raw"
+	flagOutput   = "output"
 	flagDebug    = "debug"
 	flagComments = "comments"
 	flagPlain    = "plain"
@@ -46,30 +46,33 @@ func NewCmdView() *cobra.Command {
 			"help:args": "ISSUE-KEY\tIssue key, eg: ISSUE-1",
 		},
 		Args: cobra.MinimumNArgs(1),
-		Run:  view,
+		RunE: view,
 	}
 
 	cmd.Flags().Uint(flagComments, 1, "Show N comments")
 	cmd.Flags().Bool(flagPlain, false, "Display output in plain mode")
-	cmd.Flags().Bool(flagRaw, false, "Print raw Jira API response")
+	cmd.Flags().String(flagOutput, "", "Output format: json (default: formatted)")
 
 	return &cmd
 }
 
-func view(cmd *cobra.Command, args []string) {
-	raw, err := cmd.Flags().GetBool(flagRaw)
-	cmdutil.ExitIfError(err)
-
-	if raw {
-		viewRaw(cmd, args)
-		return
+func view(cmd *cobra.Command, args []string) error {
+	outputFormat, err := cmd.Flags().GetString(flagOutput)
+	if err != nil {
+		return err
 	}
-	viewPretty(cmd, args)
+
+	if outputFormat == "json" {
+		return viewRaw(cmd, args)
+	}
+	return viewPretty(cmd, args)
 }
 
-func viewRaw(cmd *cobra.Command, args []string) {
+func viewRaw(cmd *cobra.Command, args []string) error {
 	debug, err := cmd.Flags().GetBool(flagDebug)
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	key := cmdutil.GetJiraIssueKey(viper.GetString(configProject), args[0])
 
@@ -80,19 +83,26 @@ func viewRaw(cmd *cobra.Command, args []string) {
 		client := api.DefaultClient(debug)
 		return api.ProxyGetIssueRaw(client, key)
 	}()
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	fmt.Println(apiResp)
+	return nil
 }
 
-func viewPretty(cmd *cobra.Command, args []string) {
+func viewPretty(cmd *cobra.Command, args []string) error {
 	debug, err := cmd.Flags().GetBool(flagDebug)
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	var comments uint
 	if cmd.Flags().Changed(flagComments) {
 		comments, err = cmd.Flags().GetUint(flagComments)
-		cmdutil.ExitIfError(err)
+		if err != nil {
+			return err
+		}
 	} else {
 		numComments := viper.GetUint("num_comments")
 		comments = max(numComments, 1)
@@ -106,10 +116,14 @@ func viewPretty(cmd *cobra.Command, args []string) {
 		client := api.DefaultClient(debug)
 		return api.ProxyGetIssue(client, key, issue.NewNumCommentsFilter(comments))
 	}()
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	plain, err := cmd.Flags().GetBool(flagPlain)
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	v := tuiView.Issue{
 		Server:  viper.GetString(configServer),
@@ -117,5 +131,5 @@ func viewPretty(cmd *cobra.Command, args []string) {
 		Display: tuiView.DisplayFormat{Plain: plain},
 		Options: tuiView.IssueOption{NumComments: comments},
 	}
-	cmdutil.ExitIfError(v.Render())
+	return v.Render()
 }

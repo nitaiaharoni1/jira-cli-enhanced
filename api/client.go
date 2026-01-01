@@ -262,3 +262,8 @@ func ProxyUnwatchIssue(c *jira.Client, key string, user *jira.User) error {
 	// Call UnwatchIssueWithAccountID (exported method)
 	return c.UnwatchIssueWithAccountID(key, watcher, it == jira.InstallationTypeLocal, useAccountID)
 }
+
+// ProxyMe fetches the current user information.
+func ProxyMe(c *jira.Client) (*jira.Me, error) {
+	return c.Me()
+}

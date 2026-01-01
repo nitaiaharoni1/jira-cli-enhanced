@@ -11,15 +11,19 @@ import (
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/board"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/completion"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/epic"
+	"github.com/ankitpokhrel/jira-cli/internal/cmd/filter"
 	initCmd "github.com/ankitpokhrel/jira-cli/internal/cmd/init"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/issue"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/man"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/me"
+	"github.com/ankitpokhrel/jira-cli/internal/cmd/my"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/open"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/project"
+	"github.com/ankitpokhrel/jira-cli/internal/cmd/quick"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/release"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/serverinfo"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/sprint"
+	"github.com/ankitpokhrel/jira-cli/internal/cmd/stats"
 	"github.com/ankitpokhrel/jira-cli/internal/cmd/version"
 	"github.com/ankitpokhrel/jira-cli/internal/cmdutil"
 	jiraConfig "github.com/ankitpokhrel/jira-cli/internal/config"
@@ -138,12 +142,16 @@ func addChildCommands(cmd *cobra.Command) {
 		sprint.NewCmdSprint(),
 		board.NewCmdBoard(),
 		project.NewCmdProject(),
+		filter.NewCmdFilter(),
+		quick.NewCmdQuick(),
 		open.NewCmdOpen(),
 		me.NewCmdMe(),
+		my.NewCmdMy(),
 		serverinfo.NewCmdServerInfo(),
 		completion.NewCmdCompletion(),
 		version.NewCmdVersion(),
 		release.NewCmdRelease(),
+		stats.NewCmdStats(),
 		man.NewCmdMan(),
 	)
 }

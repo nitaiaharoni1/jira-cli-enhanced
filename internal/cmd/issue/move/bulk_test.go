@@ -27,3 +27,4 @@ func TestMoveBulkIntegration(t *testing.T) {
 	t.Skip("Integration test not fully implemented - requires test issue creation/cleanup")
 }
 
+

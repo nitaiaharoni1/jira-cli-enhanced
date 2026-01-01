@@ -19,7 +19,8 @@ import (
 	"github.com/ankitpokhrel/jira-cli/pkg/tui"
 )
 
-// ExitIfError exists with error message if err is not nil.
+// ExitIfError exits with error message if err is not nil.
+// DEPRECATED: Use proper error returns instead. This function will be removed in a future version.
 // It provides actionable suggestions based on error type.
 func ExitIfError(err error) {
 	if err == nil {
@@ -136,6 +137,7 @@ func Fail(msg string, args ...interface{}) {
 }
 
 // Failed prints failure message in stderr and exits.
+// DEPRECATED: Use fmt.Errorf and return errors instead. This function will be removed in a future version.
 func Failed(msg string, args ...interface{}) {
 	Fail(msg, args...)
 	os.Exit(1)

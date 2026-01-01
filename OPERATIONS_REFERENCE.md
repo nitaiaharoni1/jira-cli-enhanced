@@ -570,3 +570,4 @@ jira issue list -w
 - Can override config with `--config` flag or `JIRA_CONFIG_FILE` env var
 - Supports both Cloud and On-Premise Jira installations
 
+

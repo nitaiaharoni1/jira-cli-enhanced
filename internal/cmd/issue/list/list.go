@@ -75,12 +75,18 @@ func NewCmdList() *cobra.Command {
 		Example: examples,
 		Aliases: []string{"lists", "ls", "search"},
 		Args:    cobra.RangeArgs(0, 1),
-		Run:     List,
+		RunE:    List,
 	}
 }
 
 // List displays a list view.
-func List(cmd *cobra.Command, args []string) {
+func List(cmd *cobra.Command, args []string) error {
+	loadList(cmd, args)
+	return nil
+}
+
+// LoadList loads and displays the list (exported for use by other commands).
+func LoadList(cmd *cobra.Command, args []string) {
 	loadList(cmd, args)
 }
 
@@ -90,23 +96,33 @@ func loadList(cmd *cobra.Command, args []string) {
 	numComments := viper.GetUint("num_comments")
 
 	debug, err := cmd.Flags().GetBool("debug")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	pk, err := cmd.Flags().GetString("parent")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	err = cmd.Flags().Set("parent", cmdutil.GetJiraIssueKey(project, pk))
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
-	if len(args) > 0 {
+		if len(args) > 0 {
 		searchQuery := fmt.Sprintf(`text ~ %q`, strings.Join(args, " "))
 
 		jqlFlag, err := cmd.Flags().GetString("jql")
-		cmdutil.ExitIfError(err)
+		if err != nil {
+			return err
+		}
 		if jqlFlag != "" {
 			searchQuery = fmt.Sprintf(`%s AND %s`, jqlFlag, searchQuery)
 		}
-		cmdutil.ExitIfError(cmd.Flags().Set("jql", searchQuery))
+		if err := cmd.Flags().Set("jql", searchQuery); err != nil {
+			return err
+		}
 	}
 
 	issues, err := func() ([]*jira.Issue, error) {
@@ -125,30 +141,70 @@ func loadList(cmd *cobra.Command, args []string) {
 
 		return resp.Issues, nil
 	}()
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	if len(issues) == 0 {
 		fmt.Println()
-		cmdutil.Failed("No result found for given query in project %q", project)
-		return
+		return fmt.Errorf("no result found for given query in project %q", project)
 	}
 
-	raw, err := cmd.Flags().GetBool("raw")
-	cmdutil.ExitIfError(err)
+	// Check for output format flag
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	
+	keysOnly, err := cmd.Flags().GetBool("keys-only")
+	if err != nil {
+		return err
+	}
 
-	if raw {
+	// Handle output formats
+	if keysOnly {
+		outputKeysOnly(issues)
+		return nil
+	}
+
+	if outputFormat != "" {
+		switch outputFormat {
+		case "json":
+			outputRawJSON(issues)
+			return
+		case "csv":
+			// Will be handled by CSV flag below
+		case "keys":
+			outputKeysOnly(issues)
+			return nil
+		case "table":
+			// Default table view
+		default:
+			return fmt.Errorf("invalid output format: %s. Valid formats: json, csv, keys, table", outputFormat)
+		}
+	}
+
+	if outputFormat == "json" {
 		outputRawJSON(issues)
-		return
+		return nil
 	}
 
 	plain, err := cmd.Flags().GetBool("plain")
 	cmdutil.ExitIfError(err)
+	
+	if outputFormat == "csv" {
+		plain = true
+	}
 
 	delimiter, err := cmd.Flags().GetString("delimiter")
 	cmdutil.ExitIfError(err)
 
 	csv, err := cmd.Flags().GetBool("csv")
 	cmdutil.ExitIfError(err)
+	
+	if outputFormat == "csv" {
+		csv = true
+	}
 
 	noHeaders, err := cmd.Flags().GetBool("no-headers")
 	cmdutil.ExitIfError(err)
@@ -196,7 +252,7 @@ func loadList(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	cmdutil.ExitIfError(v.Render())
+	return v.Render()
 }
 
 func outputRawJSON(issues []*jira.Issue) {
@@ -206,6 +262,12 @@ func outputRawJSON(issues []*jira.Issue) {
 		return
 	}
 	fmt.Println(string(data))
+}
+
+func outputKeysOnly(issues []*jira.Issue) {
+	for _, issue := range issues {
+		fmt.Println(issue.Key)
+	}
 }
 
 // SetFlags sets flags supported by a list command.
@@ -244,8 +306,8 @@ func SetFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-truncate", false, "Show all available columns in plain mode. Works only with --plain")
 	cmd.Flags().String("delimiter", "\t", "Custom delimeter for columns in plain mode. Works only with --plain")
 	cmd.Flags().Uint("comments", 1, "Show N comments when viewing the issue")
-	cmd.Flags().Bool("raw", false, "Print raw JSON output")
-	cmd.Flags().Bool("csv", false, "Print output in CSV format")
+	cmd.Flags().String("output", "", "Output format: json, csv, keys, table (default: table)")
+	cmd.Flags().Bool("keys-only", false, "Output only issue keys (one per line)")
 
 	if cmd.HasParent() && cmd.Parent().Name() != "sprint" {
 		cmd.Flags().String("columns", "", "Comma separated list of columns to display in the plain mode.\n"+

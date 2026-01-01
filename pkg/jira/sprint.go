@@ -123,6 +123,148 @@ func (c *Client) EndSprint(sprintID int) error {
 	return nil
 }
 
+// CreateSprint creates a new sprint.
+func (c *Client) CreateSprint(boardID int, name, startDate, endDate, goal string) (*Sprint, error) {
+	sprint := Sprint{
+		Name:      name,
+		BoardID:   boardID,
+		Status:    SprintStateFuture,
+		StartDate: startDate,
+		EndDate:   endDate,
+		Goal:      goal,
+	}
+
+	body, err := json.Marshal(sprint)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := c.PostV1(
+		context.Background(),
+		"/sprint",
+		body,
+		Header{
+			"Accept":       "application/json",
+			"Content-Type": "application/json",
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
+		return nil, formatUnexpectedResponse(res)
+	}
+
+	var s Sprint
+	err = json.NewDecoder(res.Body).Decode(&s)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}
+
+// StartSprint starts a sprint by updating its status to active.
+func (c *Client) StartSprint(sprintID int) error {
+	sprint, err := c.GetSprint(sprintID)
+	if err != nil {
+		return err
+	}
+
+	if sprint.Status == SprintStateActive {
+		return fmt.Errorf("sprint %d is already active", sprintID)
+	}
+
+	sprint.Status = SprintStateActive
+	body, err := json.Marshal(sprint)
+	if err != nil {
+		return err
+	}
+
+	res, err := c.PutV1(
+		context.Background(),
+		fmt.Sprintf("/sprint/%d", sprintID),
+		body,
+		Header{
+			"Accept":       "application/json",
+			"Content-Type": "application/json",
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return formatUnexpectedResponse(res)
+	}
+
+	return nil
+}
+
+// UpdateSprint updates an existing sprint.
+func (c *Client) UpdateSprint(sprintID int, name, startDate, endDate, goal string) (*Sprint, error) {
+	sprint, err := c.GetSprint(sprintID)
+	if err != nil {
+		return nil, err
+	}
+
+	if name != "" {
+		sprint.Name = name
+	}
+	if startDate != "" {
+		sprint.StartDate = startDate
+	}
+	if endDate != "" {
+		sprint.EndDate = endDate
+	}
+	if goal != "" {
+		sprint.Goal = goal
+	}
+
+	body, err := json.Marshal(sprint)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := c.PutV1(
+		context.Background(),
+		fmt.Sprintf("/sprint/%d", sprintID),
+		body,
+		Header{
+			"Accept":       "application/json",
+			"Content-Type": "application/json",
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, formatUnexpectedResponse(res)
+	}
+
+	var s Sprint
+	err = json.NewDecoder(res.Body).Decode(&s)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}
+
 // SprintsInBoards fetches sprints across given board IDs.
 //
 // qp is an additional query parameters in key, value pair format, eg: state=closed.

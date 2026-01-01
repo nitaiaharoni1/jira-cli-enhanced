@@ -106,3 +106,4 @@ export JIRA_TEST_PROJECT="your-project"
 
 The enhanced jira-cli is ready to use! Use `./bin/jira` to access the new features.
 
+

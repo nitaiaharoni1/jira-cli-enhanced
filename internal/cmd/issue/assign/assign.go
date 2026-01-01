@@ -1,6 +1,7 @@
 package assign
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -44,22 +45,36 @@ $ jira issue assign ISSUE-1 x`
 
 // NewCmdAssign is an assign command.
 func NewCmdAssign() *cobra.Command {
-	return &cobra.Command{
-		Use:     "assign ISSUE-KEY ASSIGNEE",
+	cmd := cobra.Command{
+		Use:     "assign ISSUE-KEY... ASSIGNEE",
 		Short:   "Assign issue to a user",
 		Long:    helpText,
 		Example: examples,
 		Aliases: []string{"asg"},
 		Annotations: map[string]string{
-			"help:args": `ISSUE-KEY	Issue key, eg: ISSUE-1
+			"help:args": `ISSUE-KEY	Issue key(s), eg: ISSUE-1
 ASSIGNEE	Email or display name of the user to assign the issue to`,
 		},
-		Run: assign,
+		RunE: assign,
 	}
+
+	cmd.Flags().Bool("stdin", false, "Read issue keys from stdin (one per line)")
+	cmd.Flags().String("jql", "", "Apply to all issues matching JQL query")
+
+	return &cmd
 }
 
-func assign(cmd *cobra.Command, args []string) {
+func assign(cmd *cobra.Command, args []string) error {
 	project := viper.GetString("project.key")
+	
+	// Check for stdin or JQL flags
+	stdin, _ := cmd.Flags().GetBool("stdin")
+	jql, _ := cmd.Flags().GetString("jql")
+	
+	if stdin || jql != "" {
+		return assignBulk(cmd, args, project, stdin, jql)
+	}
+	
 	params := parseArgsAndFlags(cmd.Flags(), args, project)
 	client := api.DefaultClient(params.debug)
 	ac := assignCmd{
@@ -69,19 +84,24 @@ func assign(cmd *cobra.Command, args []string) {
 	}
 	lu := strings.ToLower(ac.params.user)
 
-	cmdutil.ExitIfError(ac.setIssueKey(project))
+	if err := ac.setIssueKey(project); err != nil {
+		return err
+	}
 
 	if lu != strings.ToLower(optionNone) && lu != "x" && lu != jira.AssigneeDefault {
-		cmdutil.ExitIfError(ac.setAvailableUsers(project))
-		cmdutil.ExitIfError(ac.setAssignee(project))
+		if err := ac.setAvailableUsers(project); err != nil {
+			return err
+		}
+		if err := ac.setAssignee(project); err != nil {
+			return err
+		}
 
 		lu = strings.ToLower(ac.params.user)
 	}
 
 	u, err := ac.verifyAssignee()
 	if err != nil {
-		cmdutil.Failed("Error: %s", err.Error())
-		return
+		return fmt.Errorf("error: %s", err.Error())
 	}
 
 	var assignee, uname string
@@ -108,7 +128,9 @@ func assign(cmd *cobra.Command, args []string) {
 
 		return api.ProxyAssignIssue(client, ac.params.key, u, assignee)
 	}()
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	if uname == "unassigned" {
 		cmdutil.Success("User unassigned from the issue %q", ac.params.key)
@@ -116,6 +138,148 @@ func assign(cmd *cobra.Command, args []string) {
 		cmdutil.Success("User %q assigned to issue %q", uname, ac.params.key)
 	}
 	fmt.Printf("%s\n", cmdutil.GenerateServerBrowseURL(viper.GetString("server"), ac.params.key))
+	return nil
+}
+
+func assignBulk(cmd *cobra.Command, args []string, project string, stdin bool, jql string) error {
+	debug, _ := cmd.Flags().GetBool("debug")
+	client := api.DefaultClient(debug)
+	
+	var issueKeys []string
+	var err error
+	
+	if stdin {
+		// Read from stdin
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			key := strings.TrimSpace(scanner.Text())
+			if key != "" {
+				issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("failed to read from stdin: %w", err)
+		}
+	} else if jql != "" {
+		// Get issues from JQL
+		result, err := api.ProxySearch(client, jql, 0, 1000)
+		if err != nil {
+			return fmt.Errorf("failed to search issues: %w", err)
+		}
+		for _, issue := range result.Issues {
+			issueKeys = append(issueKeys, issue.Key)
+		}
+	} else {
+		// Use args (support multiple issue keys)
+		if len(args) < 2 {
+			return fmt.Errorf("assignee required")
+		}
+		assignee := args[len(args)-1]
+		issueKeys = make([]string, 0, len(args)-1)
+		for _, key := range args[:len(args)-1] {
+			issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
+		}
+		return assignBulkIssues(client, issueKeys, assignee, project)
+	}
+	
+	if len(issueKeys) == 0 {
+		return fmt.Errorf("no issues found")
+	}
+	
+	// Get assignee from args
+	if len(args) < 1 {
+		return fmt.Errorf("assignee required")
+	}
+	assignee := args[len(args)-1]
+	
+	return assignBulkIssues(client, issueKeys, assignee, project)
+}
+
+func assignBulkIssues(client *jira.Client, issueKeys []string, assignee string, project string) error {
+	// Use the bulk assign logic from bulk.go
+	normalizedKeys := make([]string, 0, len(issueKeys))
+	for _, key := range issueKeys {
+		normalizedKeys = append(normalizedKeys, cmdutil.GetJiraIssueKey(project, key))
+	}
+	
+	lu := strings.ToLower(assignee)
+	var user *jira.User
+	var assigneeValue string
+
+	switch {
+	case lu == "x" || lu == strings.ToLower(optionNone):
+		assigneeValue = jira.AssigneeNone
+	case lu == strings.ToLower(optionDefault):
+		assigneeValue = jira.AssigneeDefault
+	default:
+		users, err := api.ProxyUserSearch(client, &jira.UserSearchOptions{
+			Query:      assignee,
+			Project:    project,
+			MaxResults: maxResults,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to search for user: %w", err)
+		}
+
+		if len(users) == 0 {
+			return fmt.Errorf("user %q not found", assignee)
+		}
+
+		for _, u := range users {
+			name := strings.ToLower(getQueryableName(u.Name, u.DisplayName))
+			if name == lu || strings.ToLower(u.Email) == lu {
+				user = u
+				break
+			}
+		}
+
+		if user == nil {
+			user = users[0]
+		}
+	}
+
+	var assigneeName string
+	if assigneeValue == jira.AssigneeNone {
+		assigneeName = "unassigned"
+	} else if assigneeValue == jira.AssigneeDefault {
+		assigneeName = "default assignee"
+	} else {
+		assigneeName = getQueryableName(user.Name, user.DisplayName)
+	}
+
+	s := cmdutil.Info(fmt.Sprintf("Assigning %d issues to %q...", len(normalizedKeys), assigneeName))
+	defer s.Stop()
+
+	var failed []string
+	var succeeded []string
+
+	for _, key := range normalizedKeys {
+		err := api.ProxyAssignIssue(client, key, user, assigneeValue)
+		if err != nil {
+			failed = append(failed, key)
+			continue
+		}
+		succeeded = append(succeeded, key)
+	}
+
+	s.Stop()
+
+	if len(failed) > 0 {
+		if len(succeeded) > 0 {
+			cmdutil.Warn("Assigned %d issues successfully, %d failed", len(succeeded), len(failed))
+			fmt.Printf("Failed: %s\n", strings.Join(failed, ", "))
+		} else {
+			return fmt.Errorf("failed to assign all issues")
+		}
+	} else {
+		if assigneeValue == jira.AssigneeNone {
+			cmdutil.Success("Successfully unassigned %d issues", len(succeeded))
+		} else {
+			cmdutil.Success("Successfully assigned %d issues to %q", len(succeeded), assigneeName)
+		}
+	}
+
+	return nil
 }
 
 type assignParams struct {

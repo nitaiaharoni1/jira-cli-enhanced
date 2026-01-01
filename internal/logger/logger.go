@@ -70,3 +70,4 @@ func (l *Logger) log(level, format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[%s] %s: %s\n", timestamp, level, msg)
 }
 
+

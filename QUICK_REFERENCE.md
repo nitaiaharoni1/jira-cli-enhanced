@@ -180,3 +180,4 @@ func doWithRetry(fn func() error, maxRetries int) error {
 - [ ] Convert HTTP errors to structured types
 - [ ] Test error messages are helpful
 
+

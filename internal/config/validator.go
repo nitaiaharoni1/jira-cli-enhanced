@@ -91,3 +91,4 @@ func hasAPIToken(server, login string) bool {
 	return false
 }
 
+

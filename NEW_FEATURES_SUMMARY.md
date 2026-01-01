@@ -169,3 +169,4 @@ All new operations are:
 
 The jira-cli tool is now significantly more powerful with comprehensive issue management capabilities!
 
+

@@ -1,6 +1,7 @@
 package move
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -26,16 +27,16 @@ $ jira issue move ISSUE-1 Done`
 // NewCmdMove is a move command.
 func NewCmdMove() *cobra.Command {
 	cmd := cobra.Command{
-		Use:     "move ISSUE-KEY STATE",
+		Use:     "move ISSUE-KEY... STATE",
 		Short:   "Transition an issue to a given state",
 		Long:    helpText,
 		Example: examples,
 		Aliases: []string{"transition", "mv"},
 		Annotations: map[string]string{
-			"help:args": `ISSUE-KEY	Issue key, eg: ISSUE-1
+			"help:args": `ISSUE-KEY	Issue key(s), eg: ISSUE-1
 STATE		State you want to transition the issue to`,
 		},
-		Run: move,
+		RunE: move,
 	}
 
 	cmd.Flags().SortFlags = false
@@ -44,13 +45,24 @@ STATE		State you want to transition the issue to`,
 	cmd.Flags().StringP("assignee", "a", "", "Assign issue to a user")
 	cmd.Flags().StringP("resolution", "R", "", "Set resolution")
 	cmd.Flags().Bool("web", false, "Open issue in web browser after successful transition")
+	cmd.Flags().Bool("stdin", false, "Read issue keys from stdin (one per line)")
+	cmd.Flags().String("jql", "", "Apply to all issues matching JQL query")
 
 	return &cmd
 }
 
-func move(cmd *cobra.Command, args []string) {
+func move(cmd *cobra.Command, args []string) error {
 	project := viper.GetString("project.key")
 	installation := viper.GetString("installation")
+	
+	// Check for stdin or JQL flags
+	stdin, _ := cmd.Flags().GetBool("stdin")
+	jql, _ := cmd.Flags().GetString("jql")
+	
+	if stdin || jql != "" {
+		return moveBulk(cmd, args, project, installation, stdin, jql)
+	}
+	
 	params := parseArgsAndFlags(cmd.Flags(), args, project)
 	client := api.DefaultClient(params.debug)
 	mc := moveCmd{
@@ -59,20 +71,25 @@ func move(cmd *cobra.Command, args []string) {
 		params:      params,
 	}
 
-	cmdutil.ExitIfError(mc.setIssueKey(project))
-	cmdutil.ExitIfError(mc.setAvailableTransitions())
-	cmdutil.ExitIfError(mc.setDesiredState(installation))
+	if err := mc.setIssueKey(project); err != nil {
+		return err
+	}
+	if err := mc.setAvailableTransitions(); err != nil {
+		return err
+	}
+	if err := mc.setDesiredState(installation); err != nil {
+		return err
+	}
 
 	if mc.params.state == optionCancel {
 		cmdutil.Fail("Action aborted")
-		os.Exit(0)
+		return fmt.Errorf("action aborted")
 	}
 
 	tr, err := mc.verifyTransition(installation)
 	if err != nil {
 		fmt.Println()
-		cmdutil.Failed("Error: %s", err.Error())
-		return
+		return fmt.Errorf("error: %s", err.Error())
 	}
 
 	err = func() error {
@@ -114,7 +131,9 @@ func move(cmd *cobra.Command, args []string) {
 		})
 		return err
 	}()
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
 	server := viper.GetString("server")
 
@@ -122,9 +141,166 @@ func move(cmd *cobra.Command, args []string) {
 	fmt.Printf("%s\n", cmdutil.GenerateServerBrowseURL(server, mc.params.key))
 
 	if web, _ := cmd.Flags().GetBool("web"); web {
-		err := cmdutil.Navigate(server, mc.params.key)
-		cmdutil.ExitIfError(err)
+		if err := cmdutil.Navigate(server, mc.params.key); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func moveBulk(cmd *cobra.Command, args []string, project string, installation string, stdin bool, jql string) error {
+	debug, _ := cmd.Flags().GetBool("debug")
+	client := api.DefaultClient(debug)
+	
+	var issueKeys []string
+	var err error
+	
+	if stdin {
+		// Read from stdin
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			key := strings.TrimSpace(scanner.Text())
+			if key != "" {
+				issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("failed to read from stdin: %w", err)
+		}
+	} else if jql != "" {
+		// Get issues from JQL
+		result, err := api.ProxySearch(client, jql, 0, 1000)
+		if err != nil {
+			return fmt.Errorf("failed to search issues: %w", err)
+		}
+		for _, issue := range result.Issues {
+			issueKeys = append(issueKeys, issue.Key)
+		}
+	} else {
+		// Use args (support multiple issue keys)
+		if len(args) < 2 {
+			return fmt.Errorf("state required")
+		}
+		state := args[len(args)-1]
+		issueKeys = make([]string, 0, len(args)-1)
+		for _, key := range args[:len(args)-1] {
+			issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
+		}
+		return moveBulkIssues(cmd, client, issueKeys, state, project, installation)
+	}
+	
+	if len(issueKeys) == 0 {
+		return fmt.Errorf("no issues found")
+	}
+	
+	// Get state from args
+	if len(args) < 1 {
+		return fmt.Errorf("state required")
+	}
+	state := args[len(args)-1]
+	
+	return moveBulkIssues(cmd, client, issueKeys, state, project, installation)
+}
+
+func moveBulkIssues(cmd *cobra.Command, client *jira.Client, issueKeys []string, state string, project string, installation string) error {
+	// Use the bulk move logic from bulk.go
+	normalizedKeys := make([]string, 0, len(issueKeys))
+	for _, key := range issueKeys {
+		normalizedKeys = append(normalizedKeys, cmdutil.GetJiraIssueKey(project, key))
+	}
+
+	comment, _ := cmd.Flags().GetString("comment")
+	assignee, _ := cmd.Flags().GetString("assignee")
+	resolution, _ := cmd.Flags().GetString("resolution")
+
+	// Get transitions for first issue to validate state
+	transitions, err := api.ProxyTransitions(client, normalizedKeys[0])
+	if err != nil {
+		return fmt.Errorf("failed to fetch transitions: %w", err)
+	}
+
+	var targetTransition *jira.Transition
+	stateLower := strings.ToLower(state)
+	for _, t := range transitions {
+		if strings.ToLower(t.Name) == stateLower {
+			targetTransition = t
+			break
+		}
+	}
+
+	if targetTransition == nil {
+		available := make([]string, 0, len(transitions))
+		for _, t := range transitions {
+			available = append(available, fmt.Sprintf("'%s'", t.Name))
+		}
+		return fmt.Errorf("invalid transition state %q\nAvailable states: %s", state, strings.Join(available, ", "))
+	}
+
+	// Prepare transition request
+	trFieldsReq := jira.TransitionRequestFields{}
+	trUpdateReq := jira.TransitionRequestUpdate{}
+
+	if assignee != "" {
+		trFieldsReq.Assignee = &struct {
+			Name string `json:"name"`
+		}{Name: assignee}
+	}
+	if resolution != "" {
+		trFieldsReq.Resolution = &struct {
+			Name string `json:"name"`
+		}{Name: resolution}
+	}
+	if comment != "" {
+		trUpdateReq.Comment = []struct {
+			Add struct {
+				Body string `json:"body"`
+			} `json:"add"`
+		}{
+			{Add: struct {
+				Body string `json:"body"`
+			}{Body: comment}},
+		}
+	}
+
+	transitionReq := &jira.TransitionRequest{
+		Fields: &trFieldsReq,
+		Update: &trUpdateReq,
+		Transition: &jira.TransitionRequestData{
+			ID:   targetTransition.ID.String(),
+			Name: targetTransition.Name,
+		},
+	}
+
+	// Transition all issues
+	s := cmdutil.Info(fmt.Sprintf("Transitioning %d issues to %q...", len(normalizedKeys), state))
+	defer s.Stop()
+
+	var failed []string
+	var succeeded []string
+
+	for _, key := range normalizedKeys {
+		_, err := client.Transition(key, transitionReq)
+		if err != nil {
+			failed = append(failed, key)
+			continue
+		}
+		succeeded = append(succeeded, key)
+	}
+
+	s.Stop()
+
+	if len(failed) > 0 {
+		if len(succeeded) > 0 {
+			cmdutil.Warn("Transitioned %d issues successfully, %d failed", len(succeeded), len(failed))
+			fmt.Printf("Failed: %s\n", strings.Join(failed, ", "))
+		} else {
+			return fmt.Errorf("failed to transition all issues")
+		}
+	} else {
+		cmdutil.Success("Successfully transitioned %d issues to state %q", len(succeeded), state)
+	}
+
+	return nil
 }
 
 type moveParams struct {

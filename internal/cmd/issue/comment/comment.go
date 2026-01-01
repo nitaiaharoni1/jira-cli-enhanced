@@ -26,6 +26,7 @@ func NewCmdComment() *cobra.Command {
 		list.NewCmdList(),
 		edit.NewCmdEdit(),
 		delete.NewCmdDelete(),
+		NewCmdCommentBulk(),
 	)
 
 	return &cmd

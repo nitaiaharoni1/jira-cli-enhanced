@@ -38,7 +38,7 @@ $ jira issue create --template /path/to/template.tmpl
 $ jira issue create --template -
 
 # Create issue in the configured project with JSON output
-$ jira issue create --raw
+$ jira issue create --output json
 
 # Or, use pipe to read input directly from standard input
 $ echo "Description from stdin" | jira issue create -s"Summary" -tTask
@@ -47,7 +47,7 @@ $ echo "Description from stdin" | jira issue create -s"Summary" -tTask
 # The example below will add "Body from flag" as an issue description
 $ jira issue create -tTask -sSummary -b"Body from flag" --template /path/to/template.tpl`
 
-	flagRaw = "raw"
+	flagOutput = "output"
 )
 
 // NewCmdCreate is a create command.
@@ -57,10 +57,10 @@ func NewCmdCreate() *cobra.Command {
 		Short:   "Create an issue in a project",
 		Long:    helpText,
 		Example: examples,
-		Run:     create,
+		RunE:    create,
 	}
 
-	cmd.Flags().Bool(flagRaw, false, "Print output in JSON format")
+	cmd.Flags().String(flagOutput, "", "Output format: json (default: formatted)")
 
 	return &cmd
 }
@@ -70,13 +70,16 @@ func SetFlags(cmd *cobra.Command) {
 	cmdcommon.SetCreateFlags(cmd, "Issue")
 }
 
-func create(cmd *cobra.Command, _ []string) {
+func create(cmd *cobra.Command, _ []string) error {
 	server := viper.GetString("server")
 	project := viper.GetString("project.key")
 	projectType := viper.GetString("project.type")
 	installation := viper.GetString("installation")
 
-	params := parseFlags(cmd.Flags())
+	params, err := parseFlags(cmd.Flags())
+	if err != nil {
+		return err
+	}
 	client := api.DefaultClient(params.Debug)
 	cc := createCmd{
 		client: client,
@@ -87,18 +90,21 @@ func create(cmd *cobra.Command, _ []string) {
 		cc.params.NoInput = true
 
 		if cc.isMandatoryParamsMissing() {
-			cmdutil.Failed(
-				"Params `--summary` and `--type` is mandatory when using a non-interactive mode",
-			)
+			return fmt.Errorf("params `--summary` and `--type` are mandatory when using a non-interactive mode")
 		}
 	}
 
-	cmdutil.ExitIfError(cc.setIssueTypes())
-	cmdutil.ExitIfError(cc.askQuestions())
+	if err := cc.setIssueTypes(); err != nil {
+		return err
+	}
+	if err := cc.askQuestions(); err != nil {
+		return err
+	}
 
 	if !params.NoInput {
-		err := cmdcommon.HandleNoInput(params)
-		cmdutil.ExitIfError(err)
+		if err := cmdcommon.HandleNoInput(params); err != nil {
+			return err
+		}
 	}
 
 	params.Reporter = cmdcommon.GetRelevantUser(client, project, params.Reporter)
@@ -141,23 +147,31 @@ func create(cmd *cobra.Command, _ []string) {
 		return client.CreateV2(&cr)
 	}()
 
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return err
+	}
 
-	jsonFlag, err := cmd.Flags().GetBool(flagRaw)
-	cmdutil.ExitIfError(err)
-	if jsonFlag {
+	outputFormat, err := cmd.Flags().GetString(flagOutput)
+	if err != nil {
+		return err
+	}
+	if outputFormat == "json" {
 		jsonData, err := json.Marshal(issue)
-		cmdutil.ExitIfError(err)
+		if err != nil {
+			return err
+		}
 		fmt.Println(string(jsonData))
-		return
+		return nil
 	}
 
 	cmdutil.Success("Issue created\n%s", cmdutil.GenerateServerBrowseURL(server, issue.Key))
 
 	if web, _ := cmd.Flags().GetBool("web"); web {
-		err := cmdutil.Navigate(server, issue.Key)
-		cmdutil.ExitIfError(err)
+		if err := cmdutil.Navigate(server, issue.Key); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 type createCmd struct {
@@ -294,7 +308,7 @@ func (cc *createCmd) getRemainingQuestions() []*survey.Question {
 	if cc.params.Template != "" || cmdutil.StdinHasData() {
 		b, err := cmdutil.ReadFile(cc.params.Template)
 		if err != nil {
-			cmdutil.Failed("Error: %s", err)
+			return nil, fmt.Errorf("error reading template: %w", err)
 		}
 		defaultBody = string(b)
 	}
@@ -332,54 +346,86 @@ func (cc *createCmd) isMandatoryParamsMissing() bool {
 	return cc.params.Summary == "" || cc.params.IssueType == ""
 }
 
-func parseFlags(flags query.FlagParser) *cmdcommon.CreateParams {
+func parseFlags(flags query.FlagParser) (*cmdcommon.CreateParams, error) {
 	issueType, err := flags.GetString("type")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	parentIssueKey, err := flags.GetString("parent")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	summary, err := flags.GetString("summary")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	body, err := flags.GetString("body")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	priority, err := flags.GetString("priority")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	reporter, err := flags.GetString("reporter")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	assignee, err := flags.GetString("assignee")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	labels, err := flags.GetStringArray("label")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	components, err := flags.GetStringArray("component")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	fixVersions, err := flags.GetStringArray("fix-version")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	affectsVersions, err := flags.GetStringArray("affects-version")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	originalEstimate, err := flags.GetString("original-estimate")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	custom, err := flags.GetStringToString("custom")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	template, err := flags.GetString("template")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	noInput, err := flags.GetBool("no-input")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	debug, err := flags.GetBool("debug")
-	cmdutil.ExitIfError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	return &cmdcommon.CreateParams{
 		IssueType:        issueType,
@@ -398,5 +444,5 @@ func parseFlags(flags query.FlagParser) *cmdcommon.CreateParams {
 		Template:         template,
 		NoInput:          noInput,
 		Debug:            debug,
-	}
+	}, nil
 }

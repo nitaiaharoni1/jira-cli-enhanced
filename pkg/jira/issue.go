@@ -568,3 +568,151 @@ func (c *Client) watchIssue(key, watcher, ver string) error {
 	}
 	return nil
 }
+
+// VoteIssue adds a vote to an issue.
+func (c *Client) VoteIssue(key string) error {
+	return c.voteIssue(key, apiVersion2)
+}
+
+// VoteIssueV2 adds a vote to an issue using v2 API.
+func (c *Client) VoteIssueV2(key string) error {
+	return c.voteIssue(key, apiVersion2)
+}
+
+// UnvoteIssue removes a vote from an issue.
+func (c *Client) UnvoteIssue(key string) error {
+	return c.unvoteIssue(key, apiVersion2)
+}
+
+// UnvoteIssueV2 removes a vote from an issue using v2 API.
+func (c *Client) UnvoteIssueV2(key string) error {
+	return c.unvoteIssue(key, apiVersion2)
+}
+
+// Voters represents the voters of an issue.
+type Voters struct {
+	Self     string  `json:"self"`
+	Votes    int     `json:"votes"`
+	HasVoted bool    `json:"hasVoted"`
+	Voters   []*User `json:"voters"`
+}
+
+// GetVoters fetches the list of voters for an issue.
+func (c *Client) GetVoters(key string) (*Voters, error) {
+	return c.getVoters(key, apiVersion2)
+}
+
+// GetVotersV2 fetches the list of voters for an issue using v2 API.
+func (c *Client) GetVotersV2(key string) (*Voters, error) {
+	return c.getVoters(key, apiVersion2)
+}
+
+func (c *Client) voteIssue(key, ver string) error {
+	path := fmt.Sprintf("/issue/%s/votes", key)
+
+	var (
+		res  *http.Response
+		err  error
+		body []byte
+	)
+
+	// Empty body for vote
+	body = []byte("")
+
+	header := Header{
+		"Accept":       "application/json",
+		"Content-Type": "application/json",
+	}
+
+	switch ver {
+	case apiVersion2:
+		res, err = c.PostV2(context.Background(), path, body, header)
+	default:
+		res, err = c.PostV2(context.Background(), path, body, header)
+	}
+
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusNoContent && res.StatusCode != http.StatusOK {
+		return formatUnexpectedResponse(res)
+	}
+	return nil
+}
+
+func (c *Client) unvoteIssue(key, ver string) error {
+	path := fmt.Sprintf("/issue/%s/votes", key)
+
+	header := Header{
+		"Accept": "application/json",
+	}
+
+	var res *http.Response
+	var err error
+
+	switch ver {
+	case apiVersion2:
+		res, err = c.DeleteV2(context.Background(), path, header)
+	default:
+		res, err = c.DeleteV2(context.Background(), path, header)
+	}
+
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusNoContent && res.StatusCode != http.StatusOK {
+		return formatUnexpectedResponse(res)
+	}
+
+	return nil
+}
+
+func (c *Client) getVoters(key, ver string) (*Voters, error) {
+	path := fmt.Sprintf("/issue/%s/votes", key)
+
+	var (
+		res *http.Response
+		err error
+	)
+
+	header := Header{
+		"Accept": "application/json",
+	}
+
+	switch ver {
+	case apiVersion2:
+		res, err = c.GetV2(context.Background(), path, header)
+	default:
+		res, err = c.GetV2(context.Background(), path, header)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, ErrEmptyResponse
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, formatUnexpectedResponse(res)
+	}
+
+	var voters Voters
+	err = json.NewDecoder(res.Body).Decode(&voters)
+	if err != nil {
+		return nil, err
+	}
+
+	return &voters, nil
+}
