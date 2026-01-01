@@ -54,7 +54,11 @@ func Voters(cmd *cobra.Command, args []string) {
 	if len(voters.Voters) > 0 {
 		fmt.Println("\nVoters:")
 		for _, voter := range voters.Voters {
-			fmt.Printf("  - %s (%s)\n", voter.DisplayName, voter.EmailAddress)
+			email := voter.Email
+			if email == "" {
+				email = voter.Name
+			}
+			fmt.Printf("  - %s (%s)\n", voter.DisplayName, email)
 		}
 	}
 }

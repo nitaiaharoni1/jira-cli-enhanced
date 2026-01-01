@@ -60,7 +60,7 @@ func move(cmd *cobra.Command, args []string) error {
 	jql, _ := cmd.Flags().GetString("jql")
 	
 	if stdin || jql != "" {
-		return moveBulk(cmd, args, project, installation, stdin, jql)
+		return moveBulk(cmd, args)
 	}
 	
 	params := parseArgsAndFlags(cmd.Flags(), args, project)

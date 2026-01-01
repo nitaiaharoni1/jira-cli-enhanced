@@ -42,7 +42,16 @@ func Start(cmd *cobra.Command, args []string) {
 
 	// Assign to self
 	s := cmdutil.Info("Assigning issue to self...")
-	err = api.ProxyAssignIssue(client, key, me, "")
+	assignee := me.Email
+	if assignee == "" {
+		assignee = me.Name
+	}
+	err = api.ProxyAssignIssue(client, key, &jira.User{
+		Email:       me.Email,
+		Name:        me.Name,
+		DisplayName: me.Name,
+		Active:      true,
+	}, "")
 	s.Stop()
 	cmdutil.ExitIfError(err)
 
@@ -76,6 +85,6 @@ func Start(cmd *cobra.Command, args []string) {
 	s.Stop()
 	cmdutil.ExitIfError(err)
 
-	cmdutil.Success("Issue %s started: assigned to %s and moved to In Progress", key, me.DisplayName)
+	cmdutil.Success("Issue %s started: assigned to %s and moved to In Progress", key, me.Name)
 }
 
