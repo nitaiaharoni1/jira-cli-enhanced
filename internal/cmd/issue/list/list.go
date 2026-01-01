@@ -86,11 +86,11 @@ func List(cmd *cobra.Command, args []string) error {
 }
 
 // LoadList loads and displays the list (exported for use by other commands).
-func LoadList(cmd *cobra.Command, args []string) {
-	loadList(cmd, args)
+func LoadList(cmd *cobra.Command, args []string) error {
+	return loadList(cmd, args)
 }
 
-func loadList(cmd *cobra.Command, args []string) {
+func loadList(cmd *cobra.Command, args []string) error {
 	server := viper.GetString("server")
 	project := viper.GetString("project.key")
 	numComments := viper.GetUint("num_comments")
@@ -171,7 +171,7 @@ func loadList(cmd *cobra.Command, args []string) {
 		switch outputFormat {
 		case "json":
 			outputRawJSON(issues)
-			return
+			return nil
 		case "csv":
 			// Will be handled by CSV flag below
 		case "keys":

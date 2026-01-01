@@ -148,60 +148,6 @@ func move(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func moveBulk(cmd *cobra.Command, args []string, project string, installation string, stdin bool, jql string) error {
-	debug, _ := cmd.Flags().GetBool("debug")
-	client := api.DefaultClient(debug)
-	
-	var issueKeys []string
-	var err error
-	
-	if stdin {
-		// Read from stdin
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			key := strings.TrimSpace(scanner.Text())
-			if key != "" {
-				issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("failed to read from stdin: %w", err)
-		}
-	} else if jql != "" {
-		// Get issues from JQL
-		result, err := api.ProxySearch(client, jql, 0, 1000)
-		if err != nil {
-			return fmt.Errorf("failed to search issues: %w", err)
-		}
-		for _, issue := range result.Issues {
-			issueKeys = append(issueKeys, issue.Key)
-		}
-	} else {
-		// Use args (support multiple issue keys)
-		if len(args) < 2 {
-			return fmt.Errorf("state required")
-		}
-		state := args[len(args)-1]
-		issueKeys = make([]string, 0, len(args)-1)
-		for _, key := range args[:len(args)-1] {
-			issueKeys = append(issueKeys, cmdutil.GetJiraIssueKey(project, key))
-		}
-		return moveBulkIssues(cmd, client, issueKeys, state, project, installation)
-	}
-	
-	if len(issueKeys) == 0 {
-		return fmt.Errorf("no issues found")
-	}
-	
-	// Get state from args
-	if len(args) < 1 {
-		return fmt.Errorf("state required")
-	}
-	state := args[len(args)-1]
-	
-	return moveBulkIssues(cmd, client, issueKeys, state, project, installation)
-}
-
 func moveBulkIssues(cmd *cobra.Command, client *jira.Client, issueKeys []string, state string, project string, installation string) error {
 	// Use the bulk move logic from bulk.go
 	normalizedKeys := make([]string, 0, len(issueKeys))
