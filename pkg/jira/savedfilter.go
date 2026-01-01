@@ -1,7 +1,6 @@
 package jira
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"

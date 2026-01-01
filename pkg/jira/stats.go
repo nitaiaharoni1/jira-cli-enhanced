@@ -1,10 +1,7 @@
 package jira
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 )
